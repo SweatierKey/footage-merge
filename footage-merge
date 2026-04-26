@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+"""footage-merge: concatenate video files into one output, via ffmpeg's concat demuxer.
+
+Inputs come either as positional arguments or as one path per line on stdin
+(but not both). The output path is mandatory because the result is binary
+data — printing it to a terminal would be hostile.
+"""
+
+import argparse
+import os
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+from typing import List, Optional
+
+VERSION = "1.0.0"
+PROG = "footage-merge"
+
+EXIT_OK = 0
+EXIT_USAGE = 1
+EXIT_PROTOCOL = 4
+EXIT_INTERRUPT = 130
+
+
+class _Err(Exception):
+    def __init__(self, code: int, msg: str):
+        super().__init__(msg)
+        self.code = code
+        self.msg = msg
+
+
+def log(verbose: bool, msg: str) -> None:
+    if verbose:
+        print(f"{PROG}: {msg}", file=sys.stderr)
+
+
+def err(msg: str) -> None:
+    print(f"{PROG}: {msg}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Input gathering and validation
+# ---------------------------------------------------------------------------
+
+def _stdin_is_real_pipe() -> bool:
+    """True iff fd 0 is an actual pipe (FIFO) or socket — i.e. someone is
+    piping data in. /dev/null, ttys, regular files and closed fds all return
+    False so they don't trigger the "combining" check."""
+    try:
+        mode = os.fstat(0).st_mode
+    except OSError:
+        return False
+    return stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode)
+
+
+def collect_inputs_from_stdin() -> List[str]:
+    """Read one path per line; skip blank lines."""
+    out = []
+    for line in sys.stdin:
+        line = line.strip()
+        if line:
+            out.append(line)
+    return out
+
+
+def validate_inputs(paths: List[str]) -> None:
+    """Verify all inputs exist and are readable. Raise listing the missing ones."""
+    if not paths:
+        raise _Err(EXIT_USAGE, "no input files given")
+    missing = [p for p in paths if not os.path.isfile(p) or not os.access(p, os.R_OK)]
+    if missing:
+        raise _Err(
+            EXIT_USAGE,
+            "input file(s) missing or unreadable: " + ", ".join(missing),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Concat list file
+# ---------------------------------------------------------------------------
+
+def make_concat_list(paths: List[str]) -> str:
+    """Render the body of an ffmpeg concat-demuxer list file.
+
+    Each line is `file '<absolute path>'`. Single quotes inside the path are
+    escaped with the canonical concat-demuxer sequence: ' -> '\\''.
+    """
+    out = []
+    for p in paths:
+        absp = os.path.abspath(p)
+        # ffmpeg concat demuxer: close-quote, escaped quote, reopen.
+        escaped = absp.replace("'", "'\\''")
+        out.append(f"file '{escaped}'")
+    return "\n".join(out) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# ffmpeg invocation
+# ---------------------------------------------------------------------------
+
+def build_ffmpeg_cmd(list_file: str, output: str, reencode: bool) -> List[str]:
+    cmd = [
+        "ffmpeg", "-hide_banner", "-nostdin",
+        "-f", "concat", "-safe", "0",
+        "-i", list_file,
+    ]
+    if not reencode:
+        cmd += ["-c", "copy"]
+    # If overwrite was wanted, the caller deleted the file first, so -n is
+    # safe and gives ffmpeg one more seatbelt.
+    cmd += ["-n", output]
+    return cmd
+
+
+def run_ffmpeg(cmd: List[str], verbose: bool) -> int:
+    stderr_dest = None if verbose else subprocess.DEVNULL
+    log(verbose, "exec: " + " ".join(cmd))
+    try:
+        cp = subprocess.run(cmd, stderr=stderr_dest, stdin=subprocess.DEVNULL)
+    except KeyboardInterrupt:
+        err("interrupted")
+        return EXIT_INTERRUPT
+    return cp.returncode
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def _check_dependencies() -> None:
+    if not shutil.which("ffmpeg"):
+        err("ffmpeg not found in PATH (install with: apt install ffmpeg)")
+        sys.exit(EXIT_USAGE)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog=PROG,
+        description="Concatenate video files (e.g. segments produced by "
+                    "rtsp-record) into a single output file using ffmpeg's "
+                    "concat demuxer.",
+        epilog="If no positional FILE is given, paths are read from stdin "
+               "(one per line). Mixing the two modes is an error.",
+        add_help=False,
+    )
+    p.add_argument("files", nargs="*", metavar="FILE")
+    p.add_argument("-o", "--output", default=None, metavar="FILE",
+                   help="output file (mandatory; binary content is never "
+                        "written to stdout)")
+    p.add_argument("-f", "--force", action="store_true",
+                   help="overwrite the output file if it already exists")
+    p.add_argument("--reencode", action="store_true",
+                   help="re-encode instead of stream-copying; needed when "
+                        "the inputs do not share the same codec/resolution")
+    p.add_argument("-v", "--verbose", action="store_true",
+                   help="let ffmpeg's stderr through (default: silent)")
+    p.add_argument("-V", "--version", action="store_true",
+                   help="print version and exit")
+    p.add_argument("-h", "--help", action="store_true",
+                   help="show this help and exit")
+    return p
+
+
+def main(argv=None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.help:
+        parser.print_help()
+        return EXIT_OK
+    if args.version:
+        print(f"{PROG} {VERSION}")
+        return EXIT_OK
+
+    _check_dependencies()
+
+    try:
+        if not args.output:
+            raise _Err(EXIT_USAGE, "-o/--output is required")
+
+        # Distinguish "user piped data" (FIFO/socket) from "stdin is a tty
+        # or /dev/null". isatty() alone is not enough — under subprocess,
+        # systemd, cron, etc. stdin is a non-tty, but it's not a pipe with
+        # data either. Checking the fstat mode is the only portable way.
+        stdin_is_pipe = _stdin_is_real_pipe()
+        if args.files and stdin_is_pipe:
+            raise _Err(
+                EXIT_USAGE,
+                "cannot combine positional files with stdin input — pick one",
+            )
+
+        inputs = list(args.files) if args.files else collect_inputs_from_stdin()
+        validate_inputs(inputs)
+
+        if os.path.exists(args.output):
+            if not args.force:
+                raise _Err(
+                    EXIT_USAGE,
+                    f"output file exists: {args.output} (refusing to overwrite; "
+                    "use -f to override)",
+                )
+            os.remove(args.output)
+
+        # The list file is written into a NamedTemporaryFile and removed in
+        # the finally block, even on error.
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", suffix=".txt",
+            prefix="footage-merge-", delete=False,
+        )
+        try:
+            tmp.write(make_concat_list(inputs))
+            tmp.flush()
+            tmp.close()
+            log(args.verbose,
+                f"merging {len(inputs)} file(s) into {args.output} "
+                f"({'re-encode' if args.reencode else 'stream copy'})")
+            cmd = build_ffmpeg_cmd(tmp.name, args.output, args.reencode)
+            rc = run_ffmpeg(cmd, args.verbose)
+            if rc == EXIT_INTERRUPT:
+                return rc
+            if rc != 0:
+                err(f"ffmpeg exited with code {rc}")
+                return EXIT_PROTOCOL
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+
+        try:
+            size = os.path.getsize(args.output)
+            log(args.verbose, f"wrote {args.output} ({size} bytes)")
+        except OSError:
+            pass
+
+        return EXIT_OK
+
+    except _Err as e:
+        err(e.msg)
+        return e.code
+    except KeyboardInterrupt:
+        err("interrupted")
+        return EXIT_INTERRUPT
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        err("interrupted")
+        sys.exit(EXIT_INTERRUPT)
