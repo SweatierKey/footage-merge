@@ -6,7 +6,9 @@ output file. Wraps `ffmpeg`'s `concat` demuxer.
 
 ## Demo
 
-[![asciicast](https://asciinema.org/a/ELohuueIMeNLuN7M.svg)](https://asciinema.org/a/ELohuueIMeNLuN7M)
+![demo](demo.gif)
+
+Watch with pause/seek on [asciinema.org](https://asciinema.org/a/ELohuueIMeNLuN7M).
 
 ## Install
 
