@@ -4,6 +4,10 @@ Concatenate video files (e.g. the segments produced by
 [`rtsp-record`](https://github.com/SweatierKey/rtsp-record)) into a single
 output file. Wraps `ffmpeg`'s `concat` demuxer.
 
+## Demo
+
+[![asciicast](https://asciinema.org/a/ELohuueIMeNLuN7M.svg)](https://asciinema.org/a/ELohuueIMeNLuN7M)
+
 ## Install
 
     chmod +x footage-merge
