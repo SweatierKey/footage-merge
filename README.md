@@ -20,19 +20,19 @@ Watch with pause/seek on [asciinema.org](https://asciinema.org/a/ELohuueIMeNLuN7
 
 Merge a list of segments by glob:
 
-    footage-merge -o cam1-full.mp4 cam1-20260426-*.mp4
+    footage-merge -o cam1-full.mkv cam1-20260426-*.mkv
 
 Merge what `ls` finds (one path per line on stdin):
 
-    ls cam1-20260426-*.mp4 | footage-merge -o cam1-full.mp4
+    ls cam1-20260426-*.mkv | footage-merge -o cam1-full.mkv
 
 Inputs differ in codec/resolution → re-encode instead of stream-copying:
 
-    footage-merge --reencode -o joined.mp4 a.mp4 b.mp4
+    footage-merge --reencode -o joined.mkv a.mkv b.mkv
 
 Overwrite an existing output file:
 
-    footage-merge -f -o existing.mp4 a.mp4 b.mp4
+    footage-merge -f -o existing.mkv a.mkv b.mkv
 
 ### Flags
 

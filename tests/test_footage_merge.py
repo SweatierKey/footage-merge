@@ -115,32 +115,32 @@ def _make_input(d: str, name: str, payload: bytes) -> str:
 
 class MakeConcatListTests(unittest.TestCase):
     def test_basic(self):
-        out = fm.make_concat_list(["/tmp/a.mp4", "/tmp/b.mp4"])
-        self.assertEqual(out, "file '/tmp/a.mp4'\nfile '/tmp/b.mp4'\n")
+        out = fm.make_concat_list(["/tmp/a.mkv", "/tmp/b.mkv"])
+        self.assertEqual(out, "file '/tmp/a.mkv'\nfile '/tmp/b.mkv'\n")
 
     def test_quotes_in_path_escaped(self):
         # path with a single quote in it: ffmpeg's documented escape sequence.
-        out = fm.make_concat_list(["/tmp/foo's bar.mp4"])
-        self.assertEqual(out, "file '/tmp/foo'\\''s bar.mp4'\n")
+        out = fm.make_concat_list(["/tmp/foo's bar.mkv"])
+        self.assertEqual(out, "file '/tmp/foo'\\''s bar.mkv'\n")
 
     def test_relative_paths_become_absolute(self):
-        out = fm.make_concat_list(["a.mp4"])
+        out = fm.make_concat_list(["a.mkv"])
         self.assertTrue(out.startswith("file '/"))
 
 
 class BuildFfmpegCmdTests(unittest.TestCase):
     def test_stream_copy_default(self):
-        cmd = fm.build_ffmpeg_cmd("/tmp/list.txt", "/tmp/out.mp4", reencode=False)
+        cmd = fm.build_ffmpeg_cmd("/tmp/list.txt", "/tmp/out.mkv", reencode=False)
         self.assertEqual(cmd[0], "ffmpeg")
         self.assertEqual(cmd[cmd.index("-f") + 1], "concat")
         self.assertEqual(cmd[cmd.index("-safe") + 1], "0")
         self.assertEqual(cmd[cmd.index("-i") + 1], "/tmp/list.txt")
         self.assertIn("-c", cmd)
         self.assertEqual(cmd[cmd.index("-c") + 1], "copy")
-        self.assertEqual(cmd[-1], "/tmp/out.mp4")
+        self.assertEqual(cmd[-1], "/tmp/out.mkv")
 
     def test_reencode_drops_codec_copy(self):
-        cmd = fm.build_ffmpeg_cmd("/tmp/list.txt", "/tmp/out.mp4", reencode=True)
+        cmd = fm.build_ffmpeg_cmd("/tmp/list.txt", "/tmp/out.mkv", reencode=True)
         self.assertNotIn("-c", cmd)
 
 
@@ -151,10 +151,10 @@ class ValidateInputsTests(unittest.TestCase):
 
     def test_missing_file_raises_with_list(self):
         with tempfile.TemporaryDirectory() as d:
-            ok = _make_input(d, "good.mp4", b"x")
+            ok = _make_input(d, "good.mkv", b"x")
             with self.assertRaises(fm._Err) as cm:
-                fm.validate_inputs([ok, os.path.join(d, "no-such.mp4")])
-            self.assertIn("no-such.mp4", cm.exception.msg)
+                fm.validate_inputs([ok, os.path.join(d, "no-such.mkv")])
+            self.assertIn("no-such.mkv", cm.exception.msg)
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +187,7 @@ class CliTests(unittest.TestCase):
     def test_combining_modes_rejected(self):
         # subprocess + input= sets stdin to a real PIPE (FIFO), so the
         # script's _stdin_is_real_pipe() returns True and it errors out
-        # exactly as a `cat ... | footage-merge file.mp4` would.
+        # exactly as a `cat ... | footage-merge file.mkv` would.
         with _FakeFfmpegPath() as fp, tempfile.TemporaryDirectory() as d:
             a = _make_input(d, "a.bin", b"x")
             r = _run(["-o", os.path.join(d, "out.bin"), a],
